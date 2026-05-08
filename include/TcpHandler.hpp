@@ -8,6 +8,11 @@
 #include<iostream>
 #include<string.h>
 #include <unistd.h>
+#include<thread>
+#include<mutex>
+#include<vector>
+
+
 
 namespace DSE :: TcpHandler {
 
@@ -17,10 +22,16 @@ namespace DSE :: TcpHandler {
         bool setup();
         void stop();
         void send();
-        void recv();
+
+        int accept_connections();
+        void start();
+        void recvdata();
 
         private:
-        int sockfd , newfd , rv;
+        std::thread tcp_connection_thread,tcp_recv_thread;
+        std::vector<int> connection_fds;
+        std::mutex mt;
+        int sockfd{-1}, newfd{-1} , rv{0};
         const char* PORT = "5000";
         int optval = 1;
         struct addrinfo hints , *servinfo , *p;
