@@ -11,7 +11,9 @@
 #include<thread>
 #include<mutex>
 #include<vector>
+#include<unordered_map>
 
+#include "nse_fo_structs.hpp"
 
 
 namespace DSE :: TcpHandler {
@@ -21,11 +23,13 @@ namespace DSE :: TcpHandler {
         
         bool setup();
         void stop();
-        void send();
+        void send(int fd, char* buffer , size_t len);
 
         int accept_connections();
         void start();
         void recvdata();
+        bool validate_gr_request(DSE::fo::MS_GR_REQUEST& gr_request);
+        void send_gr_response(int fd, int32_t traderId);
 
         private:
         std::thread tcp_connection_thread,tcp_recv_thread;
@@ -35,6 +39,7 @@ namespace DSE :: TcpHandler {
         const char* PORT = "5000";
         int optval = 1;
         struct addrinfo hints , *servinfo , *p;
+        std::unordered_map<int32_t , int16_t> TraderIdbyBoxId;
 };
 
 }
