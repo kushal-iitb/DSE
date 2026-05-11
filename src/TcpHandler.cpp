@@ -5,6 +5,10 @@
 
 namespace DSE :: TcpHandler{
 
+    TcpHandler::TcpHandler(char* port){
+        this->PORT = port;
+    }
+
     bool TcpHandler ::setup() {
     memset(&hints , 0 , sizeof(hints)); 
     hints.ai_family = AF_INET;
@@ -103,10 +107,82 @@ namespace DSE :: TcpHandler{
         wire_header->sequence_number = DSE::bswap::bswap32(2);
         memset(wire_header->checksum , 0 , 16);
         std::memcpy(buffer+sizeof(DSE::fo::WireHeader) , &gr_response , sizeof(gr_response));
-
+        DSE_LOG_INFO(" seding GR Response");
         this->send(fd, buffer , total_len);
 
     }
+
+    void TcpHandler::send_secure_box_response(int fd, int32_t traderId){
+        int16_t boxId = TraderIdbyBoxId[traderId];
+        DSE::fo::SECURE_BOX_REGISTRATION_RESPONSE sb_response;
+        sb_response.Header.TransactionCode = DSE::bswap::bswap16(23009);
+        sb_response.Header.MessageLength = DSE::bswap::bswap16(sizeof(DSE::fo::SECURE_BOX_REGISTRATION_RESPONSE));
+        sb_response.Header.TraderId = DSE::bswap::bswap32(traderId);
+       
+        constexpr size_t total_len = sizeof(DSE::fo::WireHeader) + sizeof(DSE::fo::SECURE_BOX_REGISTRATION_RESPONSE);
+        char buffer[total_len];
+        auto* wire_header = reinterpret_cast<DSE::fo::WireHeader*>(buffer);
+        wire_header->packet_length = DSE::bswap::bswap16(total_len);
+        wire_header->sequence_number = DSE::bswap::bswap32(3);
+        memset(wire_header->checksum , 0 , 16);
+        std::memcpy(buffer+sizeof(DSE::fo::WireHeader) , &sb_response , sizeof(sb_response));
+        DSE_LOG_INFO("sending secure box response ");
+        this->send(fd, buffer , total_len);
+    }
+
+    void TcpHandler::send_box_signon_response(int fd , int32_t traderId){
+        int16_t boxId = TraderIdbyBoxId[traderId];
+        DSE::fo::BOX_SIGN_ON_RESPONSE box_sign_on_response;
+        box_sign_on_response.Header.TransactionCode = DSE::bswap::bswap16(23001);
+        box_sign_on_response.Header.MessageLength = DSE::bswap::bswap16(sizeof(DSE::fo::BOX_SIGN_ON_RESPONSE));
+        box_sign_on_response.Header.TraderId = DSE::bswap::bswap32(traderId);
+
+        box_sign_on_response.BoxId = DSE::bswap::bswap16(boxId);
+
+        memset(box_sign_on_response.Reserved , 0 , sizeof(box_sign_on_response.Reserved));
+       
+        constexpr size_t total_len = sizeof(DSE::fo::WireHeader) + sizeof(DSE::fo::BOX_SIGN_ON_RESPONSE);
+        char buffer[total_len];
+        auto* wire_header = reinterpret_cast<DSE::fo::WireHeader*>(buffer);
+        wire_header->packet_length = DSE::bswap::bswap16(total_len);
+        wire_header->sequence_number = DSE::bswap::bswap32(4);
+        memset(wire_header->checksum , 0 , 16);
+        std::memcpy(buffer+sizeof(DSE::fo::WireHeader) , &box_sign_on_response , sizeof(box_sign_on_response));
+        DSE_LOG_INFO("sending box sign on response ");
+        this->send(fd, buffer , total_len);
+    }
+
+    void TcpHandler::send_signon_response(int fd, int32_t traderId){
+    DSE::fo::MS_SIGNON signon_response{};   
+    signon_response.Header.TransactionCode = DSE::bswap::bswap16(2301);
+    signon_response.Header.MessageLength   = DSE::bswap::bswap16(sizeof(DSE::fo::MS_SIGNON));
+    signon_response.Header.TraderId        = DSE::bswap::bswap32(traderId);
+
+    signon_response.UserID = DSE::bswap::bswap32(traderId);
+    std::memcpy(signon_response.TraderName, "DSE_TEST_TRADER           ", 26);
+    std::memcpy(signon_response.BrokerID,   "TM001", 5);
+    signon_response.BranchID       = DSE::bswap::bswap16(1);
+    signon_response.VersionNumber  = DSE::bswap::bswap32(94600);   // protocol 9.46
+    signon_response.Batch2StartTime= DSE::bswap::bswap32(0);
+    signon_response.UserType       = DSE::bswap::bswap16(0);       // 0 = dealer
+    signon_response.SequenceNumber = DSE::bswap::bswap64(1);
+    std::memcpy(signon_response.BrokerName, "DSE_TEST_BROKER_NAME     ", 25);
+    signon_response.MemberType     = DSE::bswap::bswap16(0);
+    signon_response.BrokerStatus   = 'A';        // Active
+    signon_response.ClearingStatus = 'C';        // Clearing
+    signon_response.ShowIndex      = 'T';        // T = show, F = hide
+
+    constexpr size_t total_len = sizeof(DSE::fo::WireHeader) + sizeof(DSE::fo::MS_SIGNON);
+    char buffer[total_len];
+    auto* wire_header = reinterpret_cast<DSE::fo::WireHeader*>(buffer);
+    wire_header->packet_length   = DSE::bswap::bswap16(total_len);
+    wire_header->sequence_number = DSE::bswap::bswap32(5);
+    std::memset(wire_header->checksum, 0, 16);
+    std::memcpy(buffer + sizeof(DSE::fo::WireHeader), &signon_response, sizeof(signon_response));
+
+    DSE_LOG_INFO("sending MS_SIGNON response (tcode=2301)");
+    this->send(fd, buffer, total_len);
+}
 
 
     void TcpHandler::recvdata(){
@@ -126,12 +202,12 @@ namespace DSE :: TcpHandler{
             //     snprintf(checksum_hex + i*2, 3, "%02x", (uint8_t)hdr->checksum[i]);
             // }
 
-             DSE_LOG_INFO(" received wire header , packet_length  = {}  , sequence_no = {} , checksum = {} " , packet_length , sequence_no ,hdr->checksum );
+            DSE_LOG_INFO(" received wire header , packet_length  = {}  , sequence_no = {} , checksum = {} " , packet_length , sequence_no ,hdr->checksum );
+            
             if(packet_length > sizeof(DSE::fo::WireHeader)){
-                uint16_t body_len = packet_length - sizeof(DSE::fo::WireHeader);
                 char recv_buffer[1024] = {0};
                 data = recv(it , recv_buffer , sizeof(recv_buffer) , MSG_DONTWAIT);
-                        if(data==body_len){
+                        if(data==sizeof(DSE::fo::MS_GR_REQUEST)){
                         DSE_LOG_INFO( " received data from connection_id = {} , data = {} " , it , recv_buffer);
                         auto* message_header = reinterpret_cast<DSE::fo::Message_Header*>(recv_buffer);
                         uint16_t tcode = DSE::bswap::bswap16(message_header->TransactionCode);
@@ -151,6 +227,34 @@ namespace DSE :: TcpHandler{
                             }
                         }
                         }
+                        else if(data == sizeof(DSE::fo::SECURE_BOX_REGISTRATION_REQUEST)){
+                            auto* sb_request = reinterpret_cast<DSE::fo::SECURE_BOX_REGISTRATION_REQUEST*>(recv_buffer);
+                            uint16_t tcode = DSE::bswap::bswap16(sb_request->Header.TransactionCode);
+                            uint32_t trader = DSE::bswap::bswap32(sb_request->Header.TraderId);
+                            DSE_LOG_INFO(" Message Header received , transcation code = {} , traderId = {} " , tcode , trader);
+
+                            send_secure_box_response(it , trader);
+
+                        }
+                        else if(data == sizeof(DSE::fo::BOX_SIGN_ON_REQUEST)){
+                            auto* box_sign_on_request = reinterpret_cast<DSE::fo::BOX_SIGN_ON_REQUEST*>(recv_buffer);
+                            uint16_t tcode = DSE::bswap::bswap16(box_sign_on_request->Header.TransactionCode);
+                            uint32_t trader = DSE::bswap::bswap32(box_sign_on_request->Header.TraderId);
+                            DSE_LOG_INFO(" Message Header received , transcation code = {} , traderId = {} " , tcode , trader);
+
+                            send_box_signon_response(it , trader);
+                        }
+                        else if(data == sizeof(DSE::fo::MS_SIGNON)){
+                            auto* signon_request = reinterpret_cast<DSE::fo::MS_SIGNON*>(recv_buffer);
+                            uint16_t tcode  = DSE::bswap::bswap16(signon_request->Header.TransactionCode);
+                            uint32_t trader = DSE::bswap::bswap32(signon_request->Header.TraderId);
+                            int32_t userId  = DSE::bswap::bswap32(signon_request->UserID);
+                            DSE_LOG_INFO(" Message Header received , transcation code = {} , traderId = {} , userId = {} ",
+                            tcode, trader, userId);
+
+                            send_signon_response(it, trader);
+}
+
                         else{
                             DSE_LOG_ERROR(" expected 48 bytes of data for GR_REQUEST");
                         }
