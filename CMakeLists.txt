@@ -15,6 +15,7 @@ add_executable(dse
     src/main.cpp
     src/TcpHandler.cpp
     src/logging_object.cpp
+    src/matching_engine.cpp
 )
 
 target_include_directories(dse PRIVATE include)

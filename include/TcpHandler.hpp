@@ -14,14 +14,14 @@
 #include<unordered_map>
 
 #include "nse_fo_structs.hpp"
-
+#include "matching_engine.hpp"
 
 namespace DSE :: TcpHandler {
 
     class TcpHandler{
         public:
         
-        TcpHandler(char* PORT);
+        TcpHandler(char* PORT, DSE::matching_engine::matchingEngine *matchingEngine);
         bool setup();
         void stop();
         void send(int fd, char* buffer , size_t len);
@@ -43,6 +43,8 @@ namespace DSE :: TcpHandler {
         int optval = 1;
         struct addrinfo hints , *servinfo , *p;
         std::unordered_map<int32_t , int16_t> TraderIdbyBoxId;
+        DSE::matching_engine::matchingEngine* matchingEngine;
+
 };
 
 }

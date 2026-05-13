@@ -5,8 +5,9 @@
 
 namespace DSE :: TcpHandler{
 
-    TcpHandler::TcpHandler(char* port){
+    TcpHandler::TcpHandler(char* port , DSE::matching_engine::matchingEngine* matchingEngine){
         this->PORT = port;
+        this->matchingEngine = matchingEngine;
     }
 
     bool TcpHandler ::setup() {
@@ -252,8 +253,22 @@ namespace DSE :: TcpHandler{
                             DSE_LOG_INFO(" Message Header received , transcation code = {} , traderId = {} , userId = {} ",
                             tcode, trader, userId);
 
-                            send_signon_response(it, trader);
-}
+                        send_signon_response(it, trader);
+                        }
+                        else if(data == sizeof(DSE::fo::MS_OE_REQUEST_TR)){
+                            auto* oe_request = reinterpret_cast<DSE::fo::MS_OE_REQUEST_TR*>(recv_buffer);
+                            matchingEngine->onNewOrder(*oe_request);
+                        }
+                        else if(data == sizeof(DSE::fo::MS_OM_REQUEST_TR)){
+                            auto* om_request = reinterpret_cast<DSE::fo::MS_OM_REQUEST_TR*>(recv_buffer);
+                            auto tcode = DSE::bswap::bswap16(om_request->TransactionCode);
+                            if(tcode == 20040){
+                                matchingEngine->onModifyOrder(*om_request);
+                            }
+                            else{
+                                matchingEngine->onCancelOrder(*om_request);
+                            }
+                        }
 
                         else{
                             DSE_LOG_ERROR(" expected 48 bytes of data for GR_REQUEST");

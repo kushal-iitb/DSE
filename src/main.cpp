@@ -6,9 +6,9 @@ int main(){
     Logger logger;
     logger.init("DSE" , "logs" , 3);
 
-
-    DSE::TcpHandler::TcpHandler tcphandler("5000");
-    DSE::TcpHandler::TcpHandler login_handler("9090");
+    DSE::matching_engine::matchingEngine matchingEngine;
+    DSE::TcpHandler::TcpHandler tcphandler("5000" , &matchingEngine);
+    DSE::TcpHandler::TcpHandler login_handler("9090" ,&matchingEngine);
     if(tcphandler.setup()){
         DSE_LOG_INFO("host is ready to accept connections");
     }

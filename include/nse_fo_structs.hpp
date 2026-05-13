@@ -112,10 +112,94 @@ struct MS_SIGNON{
 };
 static_assert(sizeof(MS_SIGNON) == 278);
 
+struct CONTRACT_DESC_TR{
+    char InstrumentName[6];
+    char Symbol[10];
+    std::int32_t ExpiryDate;
+    std::int32_t StrikePrice;
+    char OptionType[2];
+};
+static_assert(sizeof(CONTRACT_DESC_TR) == 26);
 
+struct ST_ORDER_FLAGS{
+    std::uint16_t flags;
+};
+static_assert(sizeof(ST_ORDER_FLAGS) == 2);
 
+struct ADDITIONAL_ORDER_FLAGS{
+    std::uint8_t flags;
+};
+static_assert(sizeof(ADDITIONAL_ORDER_FLAGS) == 1);
 
+struct MS_OE_REQUEST_TR{
+    std::int16_t TransactionCode;
+    std::int32_t UserID;
+    std::int16_t ReasonCode;
+    std::int32_t TokenNo;
+    CONTRACT_DESC_TR ContractDesc;
+    char AccountNumber[10];
+    std::int16_t BookType;
+    std::int16_t BuySellIndicator;
+    std::int32_t DisclosedVolume;
+    std::int32_t Volume;
+    std::int32_t Price;
+    std::int32_t GoodTillDate;
+    ST_ORDER_FLAGS OrderFlags;
+    std::int16_t BranchId;
+    std::int32_t TraderId;
+    char BrokerId[5];
+    char OpenClose;
+    char Settlor[12];
+    std::int16_t ProClientIndicator;
+    ADDITIONAL_ORDER_FLAGS AdditionalOrderFlags;
+    char Pad;
+    std::int32_t Filler;
+    double NnfField;
+    char PAN[10];
+    std::int32_t AlgoID;
+    std::int16_t Reserved1;
+    char Reserved2[32];
+};
+static_assert(sizeof(MS_OE_REQUEST_TR) == 158);
 
+struct MS_OM_REQUEST_TR{
+    std::int16_t TransactionCode;
+    std::int32_t UserID;
+    char ModifiedCancelledBy;
+    char Pad1;
+    std::int32_t TokenNo;
+    CONTRACT_DESC_TR ContractDesc;
+    double OrderNumber;
+    char AccountNumber[10];
+    std::int16_t BookType;
+    std::int16_t BuySellIndicator;
+    std::int32_t DisclosedVolume;
+    std::int32_t DisclosedVolumeRemaining;
+    std::int32_t TotalVolumeRemaining;
+    std::int32_t Volume;
+    std::int32_t VolumeFilledToday;
+    std::int32_t Price;
+    std::int32_t GoodTillDate;
+    std::int32_t EntryDateTime;
+    std::int32_t LastModified;
+    ST_ORDER_FLAGS OrderFlags;
+    std::int16_t BranchId;
+    std::int32_t TraderId;
+    char BrokerId[5];
+    char OpenClose;
+    char Settlor[12];
+    std::int16_t ProClientIndicator;
+    ADDITIONAL_ORDER_FLAGS AdditionalOrderFlags;
+    char Pad2;
+    char Filler[4];
+    double NnfField;
+    char PAN[10];
+    std::int32_t AlgoID;
+    std::int16_t Reserved1;
+    std::int64_t LastActivityReference;
+    char Reserved2[24];
+};
+static_assert(sizeof(MS_OM_REQUEST_TR) == 186);
 
 #pragma pack(pop)
 
