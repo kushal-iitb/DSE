@@ -257,11 +257,30 @@ namespace DSE :: TcpHandler{
                         }
                         else if(data == sizeof(DSE::fo::MS_OE_REQUEST_TR)){
                             auto* oe_request = reinterpret_cast<DSE::fo::MS_OE_REQUEST_TR*>(recv_buffer);
+                            uint16_t tcode  = DSE::bswap::bswap16(oe_request->TransactionCode);
+                            int32_t  token  = DSE::bswap::bswap32(oe_request->TokenNo);
+                            int32_t  price  = DSE::bswap::bswap32(oe_request->Price);
+                            int32_t  vol    = DSE::bswap::bswap32(oe_request->Volume);
+                            int16_t  side   = DSE::bswap::bswap16(oe_request->BuySellIndicator);
+                            int32_t  trader = DSE::bswap::bswap32(oe_request->TraderId);
+                            DSE_LOG_INFO(" NEW_ORDER received , tcode = {} , token = {} , price = {} , qty = {} , side = {} , traderId = {} ",
+                                         tcode, token, price, vol, side, trader);
                             matchingEngine->onNewOrder(*oe_request);
                         }
                         else if(data == sizeof(DSE::fo::MS_OM_REQUEST_TR)){
                             auto* om_request = reinterpret_cast<DSE::fo::MS_OM_REQUEST_TR*>(recv_buffer);
-                            auto tcode = DSE::bswap::bswap16(om_request->TransactionCode);
+                            uint16_t tcode  = DSE::bswap::bswap16(om_request->TransactionCode);
+                            int32_t  token  = DSE::bswap::bswap32(om_request->TokenNo);
+                            int32_t  price  = DSE::bswap::bswap32(om_request->Price);
+                            int32_t  vol    = DSE::bswap::bswap32(om_request->Volume);
+                            int16_t  side   = DSE::bswap::bswap16(om_request->BuySellIndicator);
+                            int32_t  trader = DSE::bswap::bswap32(om_request->TraderId);
+                            uint64_t _raw_on;
+                            std::memcpy(&_raw_on, &om_request->OrderNumber, 8);
+                            uint32_t orderId = (uint32_t)be64toh(_raw_on);
+                            const char* op = (tcode == 20040) ? "MODIFY" : "CANCEL";
+                            DSE_LOG_INFO(" {} received , tcode = {} , orderId = {} , token = {} , price = {} , qty = {} , side = {} , traderId = {} ",
+                                         op, tcode, orderId, token, price, vol, side, trader);
                             if(tcode == 20040){
                                 matchingEngine->onModifyOrder(*om_request);
                             }

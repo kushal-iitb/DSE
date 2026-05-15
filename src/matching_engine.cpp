@@ -1,5 +1,16 @@
 #include "matching_engine.hpp"
 
+#include <cstring>
+#include <endian.h>
+
+namespace {
+inline uint32_t order_num_to_id(double d) {
+    uint64_t raw;
+    std::memcpy(&raw, &d, sizeof(raw));
+    return static_cast<uint32_t>(be64toh(raw));
+}
+}
+
 void DSE::matching_engine::matchingEngine::onNewOrder(DSE::fo::MS_OE_REQUEST_TR& oe_request){
 
         std::int32_t TokenNo = DSE::bswap::bswap32(oe_request.TokenNo);
@@ -41,6 +52,20 @@ void DSE::matching_engine::matchingEngine::onNewOrder(DSE::fo::MS_OE_REQUEST_TR&
             tokenByOrderIdAsk[TokenNo][price].total_qty+=qty;
         }
         OrderIdByPriceQty[orderId] = *node;
+        if(tbt_queue){
+            DSE::fo::OrderMessage message{};
+            message.header.msg_len = sizeof(message);
+            message.header.stream_id = 1;
+            message.header.seq_no = ++tbt_seq;
+            message.msg_type = 'N';
+            message.timestamp_ns = 10101;
+            message.order_id = (double)orderId;
+            message.token = TokenNo;
+            message.order_type = 'L';
+            message.price = price;
+            message.quantity = qty;
+            tbt_queue->try_push(&message , sizeof(message));
+        }
         reconcile(TokenNo , qty , orderId , BuySellIndicator);
 }
 
@@ -50,7 +75,7 @@ void DSE::matching_engine::matchingEngine::onModifyOrder(DSE::fo::MS_OM_REQUEST_
         std::int32_t qty = DSE::bswap::bswap32(om_request.Volume);
         std::int16_t BuySellIndicator = DSE::bswap::bswap16(om_request.BuySellIndicator);
 
-        std::uint32_t orderId = DSE::bswap::bswap32(om_request.OrderNumber);
+        std::uint32_t orderId = order_num_to_id(om_request.OrderNumber);
 
         std::uint32_t old_id = orderId;
         auto old_it = OrderIdByPriceQty.find(old_id);
@@ -108,6 +133,20 @@ void DSE::matching_engine::matchingEngine::onModifyOrder(DSE::fo::MS_OM_REQUEST_
             tokenByOrderIdAsk[TokenNo][price].total_qty+=qty;
         }
         OrderIdByPriceQty[orderId] = *node;
+            if(tbt_queue){
+            DSE::fo::OrderMessage message{};
+            message.header.msg_len = sizeof(message);
+            message.header.stream_id = 1;
+            message.header.seq_no = ++tbt_seq;
+            message.msg_type = 'M';
+            message.timestamp_ns = 10101;
+            message.order_id = (double)orderId;
+            message.token = TokenNo;
+            message.order_type = 'L';
+            message.price = price;
+            message.quantity = qty;
+            tbt_queue->try_push(&message , sizeof(message));
+        }
         reconcile(TokenNo , qty , orderId , BuySellIndicator);
 
 }
@@ -118,7 +157,7 @@ void DSE::matching_engine::matchingEngine::onCancelOrder(DSE::fo::MS_OM_REQUEST_
         std::int32_t qty = DSE::bswap::bswap32(om_request.Volume);
         std::int16_t BuySellIndicator = DSE::bswap::bswap16(om_request.BuySellIndicator);
 
-        std::uint32_t orderId = DSE::bswap::bswap32(om_request.OrderNumber);
+        std::uint32_t orderId = order_num_to_id(om_request.OrderNumber);
 
         auto it = OrderIdByPriceQty.find(orderId);
         if(it == OrderIdByPriceQty.end()) return;
@@ -140,6 +179,20 @@ void DSE::matching_engine::matchingEngine::onCancelOrder(DSE::fo::MS_OM_REQUEST_
             if(BuySellIndicator == 1) tokenByOrderIdBid[TokenNo].erase(oldPrice);
             else                      tokenByOrderIdAsk[TokenNo].erase(oldPrice);
         }
+            if(tbt_queue){
+            DSE::fo::OrderMessage message{};
+            message.header.msg_len = sizeof(message);
+            message.header.stream_id = 1;
+            message.header.seq_no = ++tbt_seq;
+            message.msg_type = 'C';
+            message.timestamp_ns = 10101;
+            message.order_id = (double)orderId;
+            message.token = TokenNo;
+            message.order_type = 'L';
+            message.price = price;
+            message.quantity = qty;
+            tbt_queue->try_push(&message , sizeof(message));
+        }
 }
 
 std::uint32_t DSE::matching_engine::matchingEngine::generateNewOrderId(){
@@ -147,6 +200,32 @@ std::uint32_t DSE::matching_engine::matchingEngine::generateNewOrderId(){
 }
 
 void DSE::matching_engine::matchingEngine::onTrade(int32_t TokenNo , uint32_t buyOrderId , uint32_t sellOrderId ){
+            if(tbt_queue){
+            DSE::fo::OrderMessage message{};
+            message.header.msg_len = sizeof(message);
+            message.header.stream_id = 1;
+            message.header.seq_no = ++tbt_seq;
+            message.msg_type = 'T';
+            message.timestamp_ns = 10101;
+            message.order_id = (double)buyOrderId;
+            message.token = TokenNo;
+            message.order_type = 'L';
+            message.price = OrderIdByPriceQty[buyOrderId].price;
+            message.quantity = OrderIdByPriceQty[buyOrderId].qyt;
+            tbt_queue->try_push(&message , sizeof(message));
+
+            message.header.msg_len = sizeof(message);
+            message.header.stream_id = 1;
+            message.header.seq_no = ++tbt_seq;
+            message.msg_type = 'T';
+            message.timestamp_ns = 10101;
+            message.order_id = (double)sellOrderId;
+            message.token = TokenNo;
+            message.order_type = 'L';
+            message.price = OrderIdByPriceQty[sellOrderId].price;
+            message.quantity = OrderIdByPriceQty[sellOrderId].qyt;
+            tbt_queue->try_push(&message , sizeof(message));
+        }
     return;
 }
 
@@ -164,6 +243,7 @@ void DSE::matching_engine::matchingEngine::reconcile(int32_t TokenNo , int32_t q
     auto biditr = tokenByOrderIdBid[TokenNo].begin();
     auto askitr = tokenByOrderIdAsk[TokenNo].begin();
     if(BuySellIndicator == 1){
+    if(tokenByOrderIdAsk[TokenNo].empty()) return; 
     while(biditr->first >= askitr->first && qty>0){
         while(qty>0){
                 int32_t askqty = askitr->second.head->qyt;
@@ -194,6 +274,7 @@ void DSE::matching_engine::matchingEngine::reconcile(int32_t TokenNo , int32_t q
         }
     }
     else{
+        if(tokenByOrderIdBid[TokenNo].empty()) return; 
         while(askitr->first<=biditr->first){
         while(qty>0){
                 int32_t bidqty = biditr->second.head->qyt;

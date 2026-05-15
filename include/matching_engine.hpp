@@ -8,6 +8,7 @@
 #include "logging_object.hpp"
 #include "bswap.hpp"
 #include "nse_fo_structs.hpp"
+#include "spsc_queue.hpp"
 
 namespace DSE::matching_engine{
 
@@ -31,6 +32,8 @@ namespace DSE::matching_engine{
         std::map<uint32_t , std::map<uint32_t , Level >> tokenByOrderIdAsk;
         std::map<uint32_t , OrderInfo> OrderIdByPriceQty;
         std::atomic<uint32_t> nextId{1};
+        DSE::spsc::SpscQueue* tbt_queue = nullptr;
+        uint32_t tbt_seq{0};
 
         public:
         void onNewOrder(DSE::fo::MS_OE_REQUEST_TR& oe_request);
@@ -39,5 +42,9 @@ namespace DSE::matching_engine{
         void onTrade(int32_t TokenNo , uint32_t buyOrderId , uint32_t sellOrderId);
         std::uint32_t generateNewOrderId();
         void reconcile(int32_t TokenNo , int32_t qty,uint32_t orderId , int16_t BuySellIndicator);
+        void set_tbt_queue(DSE::spsc::SpscQueue* tbt_queue){
+            this->tbt_queue = tbt_queue;
+        }
+
     };
 } //namespace DSE::matching_engine
