@@ -2,12 +2,15 @@
 #include "logging_object.hpp"
 #include "bswap.hpp"
 #include "nse_fo_structs.hpp"
+#include "tls_server.hpp"
 
 namespace DSE :: TcpHandler{
 
-    TcpHandler::TcpHandler(char* port , DSE::matching_engine::matchingEngine* matchingEngine){
+    TcpHandler::TcpHandler(char* port , DSE::matching_engine::matchingEngine* matchingEngine ,bool tls_mode , DSE::tls::TlsServer* tls){
         this->PORT = port;
         this->matchingEngine = matchingEngine;
+        this->tls = tls;
+        this->tls_mode = tls_mode;
     }
 
     bool TcpHandler ::setup() {
@@ -72,6 +75,17 @@ namespace DSE :: TcpHandler{
         if(connection == -1){
             DSE_LOG_ERROR("error in accept function , errno = {}" , errno);
             return -1;
+        }
+        if(tls_mode){
+            SSL* ssl = tls->accept(connection);
+            if(!ssl){
+                ::close(connection);
+                DSE_LOG_ERROR(" error in setting up ssl connection on fd = {}" , connection);
+                return -1;
+            }
+            else{
+                SSLfd[connection] =ssl;
+            }
         }
         return connection;
     }
@@ -192,7 +206,9 @@ namespace DSE :: TcpHandler{
         std::lock_guard<std::mutex> lock(mt);
         for(auto it : connection_fds){
         char wire_header[22] = {0};
-        int data = recv(it , wire_header , sizeof(wire_header) , MSG_DONTWAIT);
+        
+        int data = tls_mode ? SSL_read(SSLfd[it] ,wire_header , sizeof(wire_header)) : recv(it , wire_header , sizeof(wire_header) , MSG_DONTWAIT);
+        
         if(data == 22){
             DSE::fo::WireHeader* hdr = reinterpret_cast<DSE::fo::WireHeader*>(wire_header);
             uint16_t packet_length = DSE::bswap::bswap16(hdr->packet_length);
@@ -207,7 +223,9 @@ namespace DSE :: TcpHandler{
             
             if(packet_length > sizeof(DSE::fo::WireHeader)){
                 char recv_buffer[1024] = {0};
-                data = recv(it , recv_buffer , sizeof(recv_buffer) , MSG_DONTWAIT);
+                data = tls_mode
+                    ? SSL_read(SSLfd[it], recv_buffer, sizeof(recv_buffer))
+                    : recv(it, recv_buffer, sizeof(recv_buffer), MSG_DONTWAIT);
                         if(data==sizeof(DSE::fo::MS_GR_REQUEST)){
                         DSE_LOG_INFO( " received data from connection_id = {} , data = {} " , it , recv_buffer);
                         auto* message_header = reinterpret_cast<DSE::fo::Message_Header*>(recv_buffer);
@@ -327,7 +345,7 @@ namespace DSE :: TcpHandler{
 
     void TcpHandler::send(int fd , char* buffer , size_t len){
 
-        ::send(fd, buffer, len , 0);
+       tls_mode ? SSL_write(SSLfd[fd] , buffer, len) :  ::send(fd, buffer, len , 0);
 
     }
 

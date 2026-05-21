@@ -1,6 +1,7 @@
 #include "TcpHandler.hpp"
 #include "logging_object.hpp"
 #include "spsc_queue.hpp"
+#include "tls_server.hpp"
 
 int main(){
 
@@ -11,8 +12,10 @@ int main(){
     tbt_queue.open("tbt_shm");
     DSE::matching_engine::matchingEngine matchingEngine;
     matchingEngine.set_tbt_queue(&tbt_queue);
-    DSE::TcpHandler::TcpHandler tcphandler("5000" , &matchingEngine);
-    DSE::TcpHandler::TcpHandler login_handler("9090" ,&matchingEngine);
+    DSE::tls::TlsServer tls;
+    if(!tls.init("certs/dse.crt" , "certs/dse.key")) return 1;
+    DSE::TcpHandler::TcpHandler tcphandler("5000" , &matchingEngine , true , &tls);
+    DSE::TcpHandler::TcpHandler login_handler("9090" ,&matchingEngine , false , nullptr);
     if(tcphandler.setup()){
         DSE_LOG_INFO("host is ready to accept connections");
     }

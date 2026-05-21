@@ -15,13 +15,14 @@
 
 #include "nse_fo_structs.hpp"
 #include "matching_engine.hpp"
+#include "tls_server.hpp"
 
 namespace DSE :: TcpHandler {
 
     class TcpHandler{
         public:
         
-        TcpHandler(char* PORT, DSE::matching_engine::matchingEngine *matchingEngine);
+        TcpHandler(char* PORT, DSE::matching_engine::matchingEngine *matchingEngine , bool tls_mode ,DSE::tls::TlsServer* tls);
         bool setup();
         void stop();
         void send(int fd, char* buffer , size_t len);
@@ -44,7 +45,9 @@ namespace DSE :: TcpHandler {
         struct addrinfo hints , *servinfo , *p;
         std::unordered_map<int32_t , int16_t> TraderIdbyBoxId;
         DSE::matching_engine::matchingEngine* matchingEngine;
-
+        DSE::tls::TlsServer* tls = nullptr;
+        bool tls_mode = false;
+        std::unordered_map<int , SSL*> SSLfd;
 };
 
 }
