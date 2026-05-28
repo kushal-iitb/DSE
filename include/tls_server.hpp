@@ -2,6 +2,7 @@
 
 #include<openssl/ssl.h>
 #include<openssl/err.h>
+#include<openssl/md5.h>
 
 namespace DSE::tls{
 

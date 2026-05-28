@@ -20,6 +20,7 @@ add_executable(dse
     src/matching_engine.cpp
     src/spsc_queue.cpp
     src/tls_server.cpp
+    src/box_session.cpp
 )
 
 target_include_directories(dse PRIVATE include)

@@ -39,7 +39,7 @@ namespace DSE::matching_engine{
         void onNewOrder(DSE::fo::MS_OE_REQUEST_TR& oe_request);
         void onModifyOrder(DSE::fo::MS_OM_REQUEST_TR& om_request);
         void onCancelOrder(DSE::fo::MS_OM_REQUEST_TR& om_request);
-        void onTrade(int32_t TokenNo , uint32_t buyOrderId , uint32_t sellOrderId);
+        void onTrade(int32_t TokenNo , uint32_t buyOrderId , uint32_t sellOrderId , int32_t fill_qty);
         std::uint32_t generateNewOrderId();
         void reconcile(int32_t TokenNo , int32_t qty,uint32_t orderId , int16_t BuySellIndicator);
         void set_tbt_queue(DSE::spsc::SpscQueue* tbt_queue){

@@ -76,6 +76,7 @@ namespace DSE :: TcpHandler{
             DSE_LOG_ERROR("error in accept function , errno = {}" , errno);
             return -1;
         }
+        
         if(tls_mode){
             SSL* ssl = tls->accept(connection);
             if(!ssl){
@@ -87,6 +88,10 @@ namespace DSE :: TcpHandler{
                 SSLfd[connection] =ssl;
             }
         }
+
+        int flags = fcntl(connection , F_GETFL , 0);
+        fcntl(connection , F_SETFL , flags | O_NONBLOCK);
+
         return connection;
     }
 
@@ -196,7 +201,7 @@ namespace DSE :: TcpHandler{
     std::memcpy(buffer + sizeof(DSE::fo::WireHeader), &signon_response, sizeof(signon_response));
 
     DSE_LOG_INFO("sending MS_SIGNON response (tcode=2301)");
-    this->send(fd, buffer, total_len);
+    this->send_encrypted(fd, buffer, total_len);
 }
 
 
@@ -222,10 +227,28 @@ namespace DSE :: TcpHandler{
             DSE_LOG_INFO(" received wire header , packet_length  = {}  , sequence_no = {} , checksum = {} " , packet_length , sequence_no ,hdr->checksum );
             
             if(packet_length > sizeof(DSE::fo::WireHeader)){
-                char recv_buffer[1024] = {0};
+                size_t body_len = packet_length - sizeof(DSE::fo::WireHeader);
+                char recv_buffer[2048] = {0};
+                if(body_len > sizeof(recv_buffer))
+                continue;
+                size_t got = 0;
+                int retry = 1000;
+                while(got < body_len && retry-- >0){
                 data = tls_mode
-                    ? SSL_read(SSLfd[it], recv_buffer, sizeof(recv_buffer))
-                    : recv(it, recv_buffer, sizeof(recv_buffer), MSG_DONTWAIT);
+                    ? SSL_read(SSLfd[it], recv_buffer +got, body_len - got)
+                    : recv(it, recv_buffer + got, body_len - got, MSG_DONTWAIT);
+                    if(data>0)
+                    got+=data;
+                    else if(data<0 && (errno == EAGAIN  || errno == EWOULDBLOCK)){
+                        std::this_thread::sleep_for(std::chrono::microseconds(10));
+                    }
+                    else{
+                        break;
+                    }
+                } 
+                data = (int)got;                   
+                     if(!decrypt_in_place(it , wire_header , recv_buffer, (size_t)data))
+                        continue;
                         if(data==sizeof(DSE::fo::MS_GR_REQUEST)){
                         DSE_LOG_INFO( " received data from connection_id = {} , data = {} " , it , recv_buffer);
                         auto* message_header = reinterpret_cast<DSE::fo::Message_Header*>(recv_buffer);
@@ -248,6 +271,13 @@ namespace DSE :: TcpHandler{
                         }
                         else if(data == sizeof(DSE::fo::SECURE_BOX_REGISTRATION_REQUEST)){
                             auto* sb_request = reinterpret_cast<DSE::fo::SECURE_BOX_REGISTRATION_REQUEST*>(recv_buffer);
+                            uint8_t computed[16];
+                            MD5(reinterpret_cast<const uint8_t*>(sb_request) , sizeof(*sb_request) , computed);
+                            if(std::memcmp(computed , hdr->checksum , 16) !=0){
+                                DSE_LOG_ERROR(" MD5 mismatch on SECURE_BOX_REG");
+                                return;
+                            }
+			    DSE_LOG_INFO(" MD5 verified for SECURE_BOX_REG");
                             uint16_t tcode = DSE::bswap::bswap16(sb_request->Header.TransactionCode);
                             uint32_t trader = DSE::bswap::bswap32(sb_request->Header.TraderId);
                             DSE_LOG_INFO(" Message Header received , transcation code = {} , traderId = {} " , tcode , trader);
@@ -260,6 +290,19 @@ namespace DSE :: TcpHandler{
                             uint16_t tcode = DSE::bswap::bswap16(box_sign_on_request->Header.TransactionCode);
                             uint32_t trader = DSE::bswap::bswap32(box_sign_on_request->Header.TraderId);
                             DSE_LOG_INFO(" Message Header received , transcation code = {} , traderId = {} " , tcode , trader);
+
+                            auto box = std::make_unique<DSE::crypto::BoxSession>();
+                            unsigned char key[32] , iv[12];
+                            std::memset(key , 0x55 , sizeof(key));
+                            std::memset(iv , 0x77 , sizeof(iv));
+
+                            if(!box->init(key ,iv)){
+                                DSE_LOG_ERROR(" BoxSession init failed for fd = {} , " , it);
+                            }
+                            else{
+                                DSE_LOG_INFO(" BoxSession initialised for fd = {} " , it);
+                                sessions[it] = std::move(box);
+                            }
 
                             send_box_signon_response(it , trader);
                         }
@@ -315,32 +358,91 @@ namespace DSE :: TcpHandler{
     }
     }
 
-    void TcpHandler::start(){
-        tcp_connection_thread  = std::thread([this]{
-            while(true){
-            int conn = accept_connections();
-            if(conn!=-1){
-            DSE_LOG_INFO(" connection accepted");
-            std::lock_guard<std::mutex> lock(mt);
-            connection_fds.push_back(conn);
-            }
-            // std::this_thread::sleep_for(std::chrono::seconds(15));
-
-            }
-    });
-
-    tcp_recv_thread  = std::thread([this](){
-        while(true){
-            recvdata();
+    void TcpHandler::send_encrypted(int fd , char* buffer, size_t total_len){
+        auto box_session = sessions.find(fd);
+        if( box_session == sessions.end() || ! box_session->second){
+            this->send(fd , buffer , total_len);
+            return;
         }
-    });
 
-        tcp_connection_thread.detach();
-        tcp_recv_thread.detach();
+        auto* wire = reinterpret_cast<DSE::fo::WireHeader*>(buffer);
+        unsigned char* pt = reinterpret_cast<unsigned char*>(buffer + sizeof(DSE::fo::WireHeader));
+        size_t plain_len = total_len - sizeof(DSE::fo::WireHeader);
+
+        unsigned char tag[16];
+        unsigned char ct[1024];
+        
+        if(! box_session->second->encrypt(pt , plain_len , nullptr , 0 , ct , tag)){
+            DSE_LOG_ERROR( " encrypt failed for fd  = {} " , fd);
+            return;
+        }
+        std::memcpy(pt , ct , plain_len);
+        std::memcpy(wire->checksum , tag , 16);
+        this->send(fd , buffer, total_len);
+    }
+
+    bool TcpHandler::decrypt_in_place(int fd , char* wire_header , char* body , size_t body_len){
+        auto box_session = sessions.find(fd);
+        if(box_session == sessions.end() || ! box_session->second){
+            return true;
+        }
+
+        auto* wire = reinterpret_cast<DSE::fo::WireHeader*>(wire_header);
+        unsigned char* ct = reinterpret_cast<unsigned char*>(body);
+        unsigned char pt[1024];
+
+        if(! box_session->second->decrypt(ct , body_len , nullptr, 0 , reinterpret_cast<unsigned char*>(wire->checksum) , pt)){
+            DSE_LOG_ERROR(" decrypt failed for fd = {} ", fd);
+            return false;
+        }
+        std::memcpy(ct , pt , body_len);
+        return true;
+    }
+
+    void TcpHandler::start(){
+        if(sockfd == -1){
+            DSE_LOG_ERROR(" start() called but setup() failed — refusing to launch threads");
+            return;
+        }
+        running_.store(true, std::memory_order_release);
+
+        tcp_connection_thread = std::thread([this]{
+            while(running_.load(std::memory_order_acquire)){
+                int conn = accept_connections();
+                if(conn != -1){
+                    DSE_LOG_INFO(" connection accepted");
+                    std::lock_guard<std::mutex> lock(mt);
+                    connection_fds.push_back(conn);
+                }
+            }
+        });
+
+        tcp_recv_thread = std::thread([this](){
+            while(running_.load(std::memory_order_acquire)){
+                recvdata();
+            }
+        });
     }
 
     void TcpHandler::stop(){
+        running_.store(false, std::memory_order_release);
+        if(sockfd != -1){
+            ::shutdown(sockfd, SHUT_RDWR);
+            ::close(sockfd);
+            sockfd = -1;
+        }
+        if(tcp_connection_thread.joinable()) tcp_connection_thread.join();
+        if(tcp_recv_thread.joinable())       tcp_recv_thread.join();
 
+        std::lock_guard<std::mutex> lock(mt);
+        for(int fd : connection_fds){
+            auto sit = SSLfd.find(fd);
+            if(sit != SSLfd.end() && tls) tls->shutdown(sit->second);
+            ::close(fd);
+        }
+        connection_fds.clear();
+        SSLfd.clear();
+        sessions.clear();
     }
 
     void TcpHandler::send(int fd , char* buffer , size_t len){

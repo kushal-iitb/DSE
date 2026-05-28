@@ -133,19 +133,32 @@ void DSE::matching_engine::matchingEngine::onModifyOrder(DSE::fo::MS_OM_REQUEST_
             tokenByOrderIdAsk[TokenNo][price].total_qty+=qty;
         }
         OrderIdByPriceQty[orderId] = *node;
-            if(tbt_queue){
-            DSE::fo::OrderMessage message{};
-            message.header.msg_len = sizeof(message);
-            message.header.stream_id = 1;
-            message.header.seq_no = ++tbt_seq;
-            message.msg_type = 'M';
-            message.timestamp_ns = 10101;
-            message.order_id = (double)orderId;
-            message.token = TokenNo;
-            message.order_type = 'L';
-            message.price = price;
-            message.quantity = qty;
-            tbt_queue->try_push(&message , sizeof(message));
+        if(tbt_queue){
+            DSE::fo::OrderMessage cancel_msg{};
+            cancel_msg.header.msg_len   = sizeof(cancel_msg);
+            cancel_msg.header.stream_id = 1;
+            cancel_msg.header.seq_no    = ++tbt_seq;
+            cancel_msg.msg_type         = 'C';
+            cancel_msg.timestamp_ns     = 10101;
+            cancel_msg.order_id         = (double)old_id;
+            cancel_msg.token            = TokenNo;
+            cancel_msg.order_type       = 'L';
+            cancel_msg.price            = oldPrice;
+            cancel_msg.quantity         = oldQty;
+            tbt_queue->try_push(&cancel_msg, sizeof(cancel_msg));
+
+            DSE::fo::OrderMessage new_msg{};
+            new_msg.header.msg_len   = sizeof(new_msg);
+            new_msg.header.stream_id = 1;
+            new_msg.header.seq_no    = ++tbt_seq;
+            new_msg.msg_type         = 'N';
+            new_msg.timestamp_ns     = 10101;
+            new_msg.order_id         = (double)orderId;
+            new_msg.token            = TokenNo;
+            new_msg.order_type       = 'L';
+            new_msg.price            = price;
+            new_msg.quantity         = qty;
+            tbt_queue->try_push(&new_msg, sizeof(new_msg));
         }
         reconcile(TokenNo , qty , orderId , BuySellIndicator);
 
@@ -199,101 +212,120 @@ std::uint32_t DSE::matching_engine::matchingEngine::generateNewOrderId(){
     return nextId.fetch_add(1 , std::memory_order_relaxed);
 }
 
-void DSE::matching_engine::matchingEngine::onTrade(int32_t TokenNo , uint32_t buyOrderId , uint32_t sellOrderId ){
-            if(tbt_queue){
-            DSE::fo::OrderMessage message{};
-            message.header.msg_len = sizeof(message);
-            message.header.stream_id = 1;
-            message.header.seq_no = ++tbt_seq;
-            message.msg_type = 'T';
-            message.timestamp_ns = 10101;
-            message.order_id = (double)buyOrderId;
-            message.token = TokenNo;
-            message.order_type = 'L';
-            message.price = OrderIdByPriceQty[buyOrderId].price;
-            message.quantity = OrderIdByPriceQty[buyOrderId].qyt;
-            tbt_queue->try_push(&message , sizeof(message));
+void DSE::matching_engine::matchingEngine::onTrade(int32_t TokenNo , uint32_t buyOrderId , uint32_t sellOrderId , int32_t fill_qty){
+    DSE_LOG_INFO(" TRADE  token={}  buyId={}  sellId={}  fill_qty={}", TokenNo, buyOrderId, sellOrderId, fill_qty);
+    if(!tbt_queue) return;
 
-            message.header.msg_len = sizeof(message);
-            message.header.stream_id = 1;
-            message.header.seq_no = ++tbt_seq;
-            message.msg_type = 'T';
-            message.timestamp_ns = 10101;
-            message.order_id = (double)sellOrderId;
-            message.token = TokenNo;
-            message.order_type = 'L';
-            message.price = OrderIdByPriceQty[sellOrderId].price;
-            message.quantity = OrderIdByPriceQty[sellOrderId].qyt;
-            tbt_queue->try_push(&message , sizeof(message));
-        }
-    return;
+    auto buy_it = OrderIdByPriceQty.find(buyOrderId);
+    int32_t trade_price = (buy_it != OrderIdByPriceQty.end())
+                          ? buy_it->second.price
+                          : 0;
+
+    DSE::fo::OrderMessage message{};
+    message.header.msg_len   = sizeof(message);
+    message.header.stream_id = 1;
+    message.header.seq_no    = ++tbt_seq;
+    message.msg_type         = 'T';
+    message.timestamp_ns     = 10101;
+    message.order_id         = (double)buyOrderId;
+    message.token            = TokenNo;
+    message.order_type       = 'L';
+    message.price            = trade_price;
+    message.quantity         = fill_qty;
+    tbt_queue->try_push(&message, sizeof(message));
+
+    message.header.seq_no = ++tbt_seq;
+    message.order_id      = (double)sellOrderId;
+    tbt_queue->try_push(&message, sizeof(message));
 }
 
-void DSE::matching_engine::matchingEngine::reconcile(int32_t TokenNo , int32_t qty ,uint32_t orderId , int16_t BuySellIndicator){
-    uint32_t buyOrderId;
-    uint32_t sellOrderId;
+void DSE::matching_engine::matchingEngine::reconcile(int32_t TokenNo , int32_t qty , uint32_t orderId , int16_t BuySellIndicator){
+    auto self_it = OrderIdByPriceQty.find(orderId);
+    if(self_it == OrderIdByPriceQty.end()) return;
+    int32_t order_price = self_it->second.price;
+    int32_t orig_qty = qty;
 
-    if(BuySellIndicator ==1 ){
-        buyOrderId = orderId;
-    }
-    else{
-        sellOrderId = orderId;
-    }
-
-    auto biditr = tokenByOrderIdBid[TokenNo].begin();
-    auto askitr = tokenByOrderIdAsk[TokenNo].begin();
     if(BuySellIndicator == 1){
-    if(tokenByOrderIdAsk[TokenNo].empty()) return; 
-    while(biditr->first >= askitr->first && qty>0){
-        while(qty>0){
-                int32_t askqty = askitr->second.head->qyt;
-                if(qty>=askqty){
-                    qty -= askqty;
-                    askitr->second.total_qty-=askqty;
-                    askitr->second.head->qyt = 0;
-                    sellOrderId = askitr->second.head->orderId;
-                    askitr->second.head = askitr->second.head->next;
-                    onTrade(TokenNo , buyOrderId , sellOrderId);
-                    if(askitr->second.head == nullptr){
-                        askitr = tokenByOrderIdAsk[TokenNo].erase(askitr);
-                        if(askitr == tokenByOrderIdAsk[TokenNo].end())
-                        break;
-                        continue;
-                    }
-                }
-                else{
-                    askitr->second.head->qyt = askqty-qty;
-                    askitr->second.total_qty-=qty;
-                    qty =0;
-                    sellOrderId = askitr->second.head->orderId;
-                    onTrade(TokenNo , buyOrderId , sellOrderId);
-                }
-                if(qty>0)
-                askitr++;
+        auto& asks = tokenByOrderIdAsk[TokenNo];
+        while(qty > 0 && !asks.empty()){
+            auto askitr = asks.begin();
+            if(askitr->first > order_price) break;
+            OrderInfo* head = askitr->second.head;
+            if(!head){ asks.erase(askitr); continue; }
+
+            int32_t fill;
+            if(qty >= (int32_t)head->qyt){
+                fill = head->qyt;
+                qty -= fill;
+                askitr->second.total_qty -= fill;
+                uint32_t sellOrderId = head->orderId;
+                askitr->second.head = head->next;
+                if(askitr->second.head) askitr->second.head->prev = nullptr;
+                else                    askitr->second.tail = nullptr;
+                OrderIdByPriceQty.erase(sellOrderId);
+                if(askitr->second.head == nullptr) asks.erase(askitr);
+                onTrade(TokenNo, orderId, sellOrderId, fill);
+            } else {
+                fill = qty;
+                head->qyt -= qty;
+                askitr->second.total_qty -= qty;
+                qty = 0;
+                onTrade(TokenNo, orderId, head->orderId, fill);
             }
         }
     }
-    else{
-        if(tokenByOrderIdBid[TokenNo].empty()) return; 
-        while(askitr->first<=biditr->first){
-        while(qty>0){
-                int32_t bidqty = biditr->second.head->qyt;
-                if(qty>=bidqty){
-                    qty -= bidqty;
-                    bidqty = 0;
-                    sellOrderId = biditr->second.head->orderId;
-                    biditr->second.head = biditr->second.head->next;
-                    onTrade(TokenNo , buyOrderId , sellOrderId);
-                }
-                else{
-                    bidqty -= qty;
-                    qty =0;
-                    sellOrderId = biditr->second.head->orderId;
-                    onTrade(TokenNo , buyOrderId , sellOrderId);
-                }
-                if(qty>0)
-                biditr++;
+    else {
+        auto& bids = tokenByOrderIdBid[TokenNo];
+        while(qty > 0 && !bids.empty()){
+            auto biditr = bids.begin();
+            if(biditr->first < order_price) break;
+            OrderInfo* head = biditr->second.head;
+            if(!head){ bids.erase(biditr); continue; }
+
+            int32_t fill;
+            if(qty >= (int32_t)head->qyt){
+                fill = head->qyt;
+                qty -= fill;
+                biditr->second.total_qty -= fill;
+                uint32_t buyOrderId = head->orderId;
+                biditr->second.head = head->next;
+                if(biditr->second.head) biditr->second.head->prev = nullptr;
+                else                    biditr->second.tail = nullptr;
+                OrderIdByPriceQty.erase(buyOrderId);
+                if(biditr->second.head == nullptr) bids.erase(biditr);
+                onTrade(TokenNo, buyOrderId, orderId, fill);
+            } else {
+                fill = qty;
+                head->qyt -= qty;
+                biditr->second.total_qty -= qty;
+                qty = 0;
+                onTrade(TokenNo, head->orderId, orderId, fill);
             }
         }
+    }
+
+    int32_t matched = orig_qty - qty;
+    if(matched <= 0) return;
+
+    auto own_it = OrderIdByPriceQty.find(orderId);
+    if(own_it == OrderIdByPriceQty.end()) return;
+    OrderInfo* n = &own_it->second;
+    Level& lvl = (BuySellIndicator == 1)
+               ? tokenByOrderIdBid[TokenNo][order_price]
+               : tokenByOrderIdAsk[TokenNo][order_price];
+
+    if(qty == 0){
+        if(n->prev) n->prev->next = n->next; else lvl.head = n->next;
+        if(n->next) n->next->prev = n->prev; else lvl.tail = n->prev;
+        lvl.total_qty -= n->qyt;
+        bool empty = (lvl.head == nullptr);
+        OrderIdByPriceQty.erase(own_it);
+        if(empty){
+            if(BuySellIndicator == 1) tokenByOrderIdBid[TokenNo].erase(order_price);
+            else                      tokenByOrderIdAsk[TokenNo].erase(order_price);
+        }
+    } else {
+        n->qyt = qty;
+        lvl.total_qty -= matched;
     }
 }
